@@ -3,15 +3,15 @@ package musicranker;
 import musicranker.model.Question;
 import musicranker.model.Rating;
 import musicranker.model.Song;
+import musicranker.model.Tier;
 import musicranker.service.RankingService;
+import musicranker.service.SongService;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Scanner;
-import java.util.SortedMap;
 
-
-public class Main {
-    private static List<Question> QUESTIONS = List.of(
+public final class Main {
+    private static final List<Question> QUESTIONS = List.of(
         new Question("Listenability", "How likely are you to listen to the entire song if it comes on shuffle?", 15),
         new Question("Emotional Impact", "How strong is the emotion you feel while listening to this song?", 15),
         new Question("Replayability", "How often do you intentionally seek out this song to listen to it?", 15),
@@ -21,86 +21,217 @@ public class Main {
         new Question("Memorability", "How memorable are the riffs, melodies, lyrics or rhythms of this song?", 10),
         new Question("Versatility", "How well does this song fit different moods, environments and situations?", 10)
     );
-    
+
     private Main() {}
 
-    public static void main(String[] args){
+    public static void main(String[] args) {
         RankingService ranking = new RankingService(QUESTIONS);
-        List<Song> songs = new ArrayList<>();
-        try (Scanner scanner = new Scanner(System.in)){
-            System.out.println("=== MUSIC RANKER ===");
+        SongService library = new SongService(ranking);
+        try (Scanner scanner = new Scanner(System.in)) {
             boolean running = true;
-            while (running){
-                System.out.println("\n1. Rate a song\n2. View rankings\n3. Exit");
-                int choice = readInt(scanner, "Choose an option: ", 1, 3);
-                switch (choice) {
-                    case 1 -> {
-                        Song song = rateSong(scanner, ranking);
-                        songs.add(song);
-                        System.out.printf("\nSaved: %s — %s | %.1f/100 | Tier %s%n",
-                            song.getTitle(), song.getArtist(), ranking.calculateScore(song), ranking.determineTier(song));
+            while (running) {
+                System.out.println("\n=== MUSIC RANKER | " + library.count() + " songs ===");
+                System.out.println("1. Add song\n2. View rankings\n3. Search songs\n4. View song details");
+                System.out.println("5. Edit song\n6. Delete song\n7. Filter songs\n8. Exit");
+                switch (readInt(scanner, "Choose: ", 1, 8)) {
+                    case 1 -> addSong(scanner, library, ranking);
+                    case 2 -> printSongs(library.getAllRanked(), ranking);
+                    case 3 -> {
+                        String term = readRequired(scanner, "Search title or artist: ");
+                        printSongs(library.search(term), ranking);
                     }
-                    case 2 -> showRankings(songs, ranking);
-                    case 3 -> running = false;
-                    default -> throw new IllegalStateException("Unexpected menu option");
+                    case 4 -> showDetails(scanner, library, ranking);
+                    case 5 -> editSong(scanner, library, ranking);
+                    case 6 -> deleteSong(scanner, library, ranking);
+                    case 7 -> filterSongs(scanner, library, ranking);
+                    case 8 -> running = false;
+                    default -> throw new IllegalStateException("Unexpected option");
                 }
             }
-            System.out.println("Goodbye! Note: Phase 1 ratings are kept only until the program exits.");
+            System.out.println("Goodbye! Songs are in memory only until Phase 3 adds storage.");
         }
-    }
-private static Song rateSong(Scanner scanner, RankingService ranking) {
-        String title = readRequired(scanner, "Song title: ");
-        String artist = readRequired(scanner, "Artist: ");
-        List<Integer> answers = new ArrayList<>();
-        System.out.println("\nRate each question from 1 (lowest) to 10 (highest):");
-        List<Question> questions = ranking.getQuestions();
-        for (int i = 0; i < questions.size(); i++) {
-            Question q = questions.get(i);
-            System.out.printf("\n%d. [%s, weight %d%%]%n%s%n", i + 1, q.category(), q.weight(), q.prompt());
-            answers.add(readInt(scanner, "Rating (1-10): ", 1, 10));
-        }
-        System.out.print("\nWhat emotion(s) does this song evoke? (optional): ");
-        String emotion = scanner.nextLine();
-        System.out.print("Personal story or additional notes (optional): ");
-        String notes = scanner.nextLine();
-        return new Song(title, artist, new Rating(answers), emotion, notes);
     }
 
-    private static void showRankings(List<Song> songs, RankingService ranking) {
-        if (songs.isEmpty()) {
-            System.out.println("\nNo songs rated yet. Choose option 1 to add one.");
+    private static void addSong(Scanner scanner, SongService library, RankingService ranking) {
+        Song song = createSong(scanner, ranking);
+        if (!library.add(song)) {
+            System.out.println("That title and artist are already in your library. Use Edit instead.");
             return;
         }
-        System.out.println("\n=== YOUR SONG RANKINGS ===");
-        int position = 1;
-        for (Song song : ranking.rankSongs(songs)) {
-            System.out.printf("%d. %s — %s | %.1f/100 | Tier %s%n",
-                position++, song.getTitle(), song.getArtist(), ranking.calculateScore(song), ranking.determineTier(song));
-            if (!song.getEmotion().isBlank()) System.out.println("   Emotions: " + song.getEmotion());
-            if (!song.getNotes().isBlank()) System.out.println("   Notes: " + song.getNotes());
+        System.out.printf("Added: %s — %s | %.1f/100 | %s%n", song.getTitle(), song.getArtist(),
+                ranking.calculateScore(song), ranking.determineTier(song));
+    }
+
+    private static Song createSong(Scanner scanner, RankingService ranking) {
+        String title = readRequired(scanner, "Song title: ");
+        String artist = readRequired(scanner, "Artist: ");
+        Rating rating = askRatings(scanner, ranking, null);
+        String emotion = readOptional(scanner, "Emotions (optional): ");
+        String notes = readOptional(scanner, "Personal story / notes (optional): ");
+        return new Song(title, artist, rating, emotion, notes);
+    }
+
+    private static Rating askRatings(Scanner scanner, RankingService ranking, Rating previous) {
+        List<Integer> answers = new ArrayList<>();
+        List<Question> questions = ranking.getQuestions();
+        System.out.println("\nAnswer from 1 (lowest) to 10 (highest).");
+        if (previous != null) System.out.println("Press Enter to keep an existing rating.");
+        for (int i = 0; i < questions.size(); i++) {
+            Question q = questions.get(i);
+            System.out.printf("%n%d. %s (%d%%)%n%s%n", i + 1, q.category(), q.weight(), q.prompt());
+            int answer = previous == null
+                    ? readInt(scanner, "Rating (1-10): ", 1, 10)
+                    : readIntOrKeep(scanner, "Rating (1-10) [" + previous.getAnswers().get(i) + "]: ",
+                            1, 10, previous.getAnswers().get(i));
+            answers.add(answer);
         }
+        return new Rating(answers);
+    }
+
+    private static void showDetails(Scanner scanner, SongService library, RankingService ranking) {
+        if (library.count() == 0) { System.out.println("No songs yet."); return; }
+        printSongs(library.getAllRanked(), ranking);
+        Song song = library.getByRankedIndex(readInt(scanner, "Song number: ", 1, library.count()) - 1);
+        System.out.printf("%n=== %s — %s ===%nScore: %.1f/100 | Tier: %s%n",
+                song.getTitle(), song.getArtist(), ranking.calculateScore(song), ranking.determineTier(song));
+        for (int i = 0; i < ranking.getQuestions().size(); i++) {
+            System.out.printf("%s: %d/10%n", ranking.getQuestions().get(i).category(),
+                    song.getRating().getAnswers().get(i));
+        }
+        System.out.println("Emotions: " + (song.getEmotion().isBlank() ? "(none)" : song.getEmotion()));
+        System.out.println("Notes: " + (song.getNotes().isBlank() ? "(none)" : song.getNotes()));
+    }
+
+    private static void editSong(Scanner scanner, SongService library, RankingService ranking) {
+        if (library.count() == 0) { System.out.println("No songs to edit."); return; }
+        printSongs(library.getAllRanked(), ranking);
+        int index = readInt(scanner, "Song number to edit: ", 1, library.count()) - 1;
+        Song old = library.getByRankedIndex(index);
+        System.out.println("Press Enter to keep a value. Enter '-' to clear emotions or notes.");
+        String title = readKeep(scanner, "Title [" + old.getTitle() + "]: ", old.getTitle(), false);
+        String artist = readKeep(scanner, "Artist [" + old.getArtist() + "]: ", old.getArtist(), false);
+        System.out.print("Edit ratings? (y/N): ");
+        boolean editRatings = scanner.nextLine().trim().equalsIgnoreCase("y");
+        Rating rating = editRatings ? askRatings(scanner, ranking, old.getRating()) : old.getRating();
+        String emotion = readKeep(scanner, "Emotions [" + old.getEmotion() + "]: ", old.getEmotion(), true);
+        String notes = readKeep(scanner, "Notes [" + old.getNotes() + "]: ", old.getNotes(), true);
+        Song replacement = new Song(title, artist, rating, emotion, notes);
+        if (!library.update(index, replacement)) {
+            System.out.println("Edit cancelled: another song already has that title and artist.");
+        } else {
+            System.out.printf("Updated! New score: %.1f/100 | Tier: %s%n",
+                    ranking.calculateScore(replacement), ranking.determineTier(replacement));
+        }
+    }
+
+    private static void deleteSong(Scanner scanner, SongService library, RankingService ranking) {
+        if (library.count() == 0) { System.out.println("No songs to delete."); return; }
+        printSongs(library.getAllRanked(), ranking);
+        int index = readInt(scanner, "Song number to delete: ", 1, library.count()) - 1;
+        Song song = library.getByRankedIndex(index);
+        System.out.printf("Delete '%s' by %s? Type DELETE to confirm: ", song.getTitle(), song.getArtist());
+        if (scanner.nextLine().trim().equals("DELETE")) {
+            library.delete(index);
+            System.out.println("Song deleted.");
+        } else {
+            System.out.println("Deletion cancelled.");
+        }
+    }
+
+    private static void filterSongs(Scanner scanner, SongService library, RankingService ranking) {
+        System.out.println("\n1. By artist\n2. By tier\n3. By minimum score");
+        int option = readInt(scanner, "Filter: ", 1, 3);
+        switch (option) {
+            case 1 -> printSongs(library.filterByArtist(readRequired(scanner, "Artist: ")), ranking);
+            case 2 -> {
+                Tier tier = readTier(scanner);
+                printSongs(library.filterByTier(tier), ranking);
+            }
+            case 3 -> {
+                double minimum = readDouble(scanner, "Minimum score (10-100): ", 10, 100);
+                printSongs(library.filterByMinimumScore(minimum), ranking);
+            }
+            default -> throw new IllegalStateException("Unexpected filter");
+        }
+    }
+
+    private static Tier readTier(Scanner scanner) {
+        while (true) {
+            System.out.print("Tier (S+, S, A, B, C, D, F): ");
+            String input = scanner.nextLine().trim().toUpperCase();
+            for (Tier tier : Tier.values()) {
+                if (tier.toString().equals(input)) return tier;
+            }
+            System.out.println("Unknown tier.");
+        }
+    }
+
+    private static void printSongs(List<Song> songs, RankingService ranking) {
+        if (songs.isEmpty()) { System.out.println("No matching songs."); return; }
+        System.out.println("\n=== SONGS (HIGHEST SCORE FIRST) ===");
+        for (int i = 0; i < songs.size(); i++) {
+            Song song = songs.get(i);
+            System.out.printf("%d. %s — %s | %.1f/100 | %s%n", i + 1, song.getTitle(),
+                    song.getArtist(), ranking.calculateScore(song), ranking.determineTier(song));
+        }
+        System.out.println("Note: To edit/delete/view details, select the song number from the full rankings menu.");
     }
 
     private static String readRequired(Scanner scanner, String prompt) {
         while (true) {
             System.out.print(prompt);
-            String value = scanner.nextLine().trim();
-            if (!value.isEmpty()) return value;
+            String text = scanner.nextLine().trim();
+            if (!text.isEmpty()) return text;
             System.out.println("This field cannot be empty.");
+        }
+    }
+
+    private static String readOptional(Scanner scanner, String prompt) {
+        System.out.print(prompt);
+        return scanner.nextLine().trim();
+    }
+
+    private static String readKeep(Scanner scanner, String prompt, String old, boolean allowClear) {
+        while (true) {
+            String input = readOptional(scanner, prompt);
+            if (input.isEmpty()) return old;
+            if (allowClear && input.equals("-")) return "";
+            return input;
         }
     }
 
     private static int readInt(Scanner scanner, String prompt, int min, int max) {
         while (true) {
             System.out.print(prompt);
-            String input = scanner.nextLine().trim();
             try {
-                int number = Integer.parseInt(input);
-                if (number >= min && number <= max) return number;
-            } catch (NumberFormatException ignored) {
-                // Ask again if the input is not an integer.
-            }
-            System.out.printf("Please enter a whole number between %d and %d.%n", min, max);
+                int value = Integer.parseInt(scanner.nextLine().trim());
+                if (value >= min && value <= max) return value;
+            } catch (NumberFormatException ignored) { }
+            System.out.printf("Enter a whole number from %d to %d.%n", min, max);
+        }
+    }
+
+    private static int readIntOrKeep(Scanner scanner, String prompt, int min, int max, int old) {
+        while (true) {
+            System.out.print(prompt);
+            String input = scanner.nextLine().trim();
+            if (input.isEmpty()) return old;
+            try {
+                int value = Integer.parseInt(input);
+                if (value >= min && value <= max) return value;
+            } catch (NumberFormatException ignored) { }
+            System.out.printf("Enter a whole number from %d to %d, or press Enter.%n", min, max);
+        }
+    }
+
+    private static double readDouble(Scanner scanner, String prompt, double min, double max) {
+        while (true) {
+            System.out.print(prompt);
+            try {
+                double value = Double.parseDouble(scanner.nextLine().trim());
+                if (Double.isFinite(value) && value >= min && value <= max) return value;
+            } catch (NumberFormatException ignored) { }
+            System.out.printf("Enter a number from %.0f to %.0f.%n", min, max);
         }
     }
 }
