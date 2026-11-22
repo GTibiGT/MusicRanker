@@ -9,6 +9,9 @@ import musicranker.service.SongService;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Scanner;
+import musicranker.repository.DatabaseManager;
+import musicranker.repository.SongRepository;
+import java.sql.SQLException;
 
 public final class Main {
     private static final List<Question> QUESTIONS = List.of(
@@ -24,33 +27,101 @@ public final class Main {
 
     private Main() {}
 
+    
     public static void main(String[] args) {
+
+        // Phase 1: Ranking system
         RankingService ranking = new RankingService(QUESTIONS);
+
+        // Phase 2: Song management
         SongService library = new SongService(ranking);
+
+        // Phase 3: Database
+        SongRepository repository = new SongRepository();
+
+        // Initialize database and load saved songs
+        try {
+            DatabaseManager.initializeDatabase();
+
+            for (Song song : repository.loadAll()) {
+                library.add(song);
+            }
+
+            System.out.println("Music library loaded successfully.");
+            System.out.println("Loaded " + library.count() + " songs.");
+
+        } catch (SQLException e) {
+            System.err.println("Database error: " + e.getMessage());
+            return;
+        }
+
+        // Main application loop
         try (Scanner scanner = new Scanner(System.in)) {
+
             boolean running = true;
+
             while (running) {
-                System.out.println("\n=== MUSIC RANKER | " + library.count() + " songs ===");
-                System.out.println("1. Add song\n2. View rankings\n3. Search songs\n4. View song details");
-                System.out.println("5. Edit song\n6. Delete song\n7. Filter songs\n8. Exit");
+
+                System.out.println("\n=== MUSIC RANKER | "
+                        + library.count() + " songs ===");
+
+                System.out.println("1. Add song");
+                System.out.println("2. View rankings");
+                System.out.println("3. Search songs");
+                System.out.println("4. View song details");
+                System.out.println("5. Edit song");
+                System.out.println("6. Delete song");
+                System.out.println("7. Filter songs");
+                System.out.println("8. Exit");
+
                 switch (readInt(scanner, "Choose: ", 1, 8)) {
-                    case 1 -> addSong(scanner, library, ranking);
-                    case 2 -> printSongs(library.getAllRanked(), ranking);
+
+                    case 1 -> {
+                        addSong(scanner, library, ranking);
+                        saveLibrary(repository, library);
+                    }
+
+                    case 2 -> printSongs(
+                            library.getAllRanked(), ranking);
+
                     case 3 -> {
-                        String term = readRequired(scanner, "Search title or artist: ");
+                        String term = readRequired(
+                                scanner, "Search title or artist: ");
+
                         printSongs(library.search(term), ranking);
                     }
-                    case 4 -> showDetails(scanner, library, ranking);
-                    case 5 -> editSong(scanner, library, ranking);
-                    case 6 -> deleteSong(scanner, library, ranking);
-                    case 7 -> filterSongs(scanner, library, ranking);
-                    case 8 -> running = false;
-                    default -> throw new IllegalStateException("Unexpected option");
+
+                    case 4 -> showDetails(
+                            scanner, library, ranking);
+
+                    case 5 -> {
+                        editSong(scanner, library, ranking);
+                        saveLibrary(repository, library);
+                    }
+
+                    case 6 -> {
+                        deleteSong(scanner, library, ranking);
+                        saveLibrary(repository, library);
+                    }
+
+                    case 7 -> filterSongs(
+                            scanner, library, ranking);
+
+                    case 8 -> {
+                        if (saveLibrary(repository, library)) {
+                            running = false;
+                        } else {
+                            System.out.println(
+                                    "Exit cancelled because saving failed.");
+                        }
+                    }
                 }
             }
-            System.out.println("Goodbye! Songs are in memory only until Phase 3 adds storage.");
         }
+
+        System.out.println("Goodbye!");
     }
+
 
     private static void addSong(Scanner scanner, SongService library, RankingService ranking) {
         Song song = createSong(scanner, ranking);
@@ -138,22 +209,52 @@ public final class Main {
         }
     }
 
-    private static void filterSongs(Scanner scanner, SongService library, RankingService ranking) {
-        System.out.println("\n1. By artist\n2. By tier\n3. By minimum score");
+    
+    private static void filterSongs(
+            Scanner scanner,
+            SongService library,
+            RankingService ranking) {
+
+        System.out.println("\n=== FILTER SONGS ===");
+        System.out.println("1. By artist");
+        System.out.println("2. By tier");
+        System.out.println("3. By minimum score");
+
         int option = readInt(scanner, "Filter: ", 1, 3);
+
         switch (option) {
-            case 1 -> printSongs(library.filterByArtist(readRequired(scanner, "Artist: ")), ranking);
+
+            case 1 -> {
+                String artist = readRequired(
+                        scanner, "Artist name: ");
+
+                printSongs(
+                        library.filterByArtist(artist),
+                        ranking);
+            }
+
             case 2 -> {
                 Tier tier = readTier(scanner);
-                printSongs(library.filterByTier(tier), ranking);
+
+                printSongs(
+                        library.filterByTier(tier),
+                        ranking);
             }
+
             case 3 -> {
-                double minimum = readDouble(scanner, "Minimum score (10-100): ", 10, 100);
-                printSongs(library.filterByMinimumScore(minimum), ranking);
+                double minimum = readDouble(
+                        scanner,
+                        "Minimum score (0-100): ",
+                        0,
+                        100);
+
+                printSongs(
+                        library.filterByMinimumScore(minimum),
+                        ranking);
             }
-            default -> throw new IllegalStateException("Unexpected filter");
         }
     }
+
 
     private static Tier readTier(Scanner scanner) {
         while (true) {
@@ -232,6 +333,21 @@ public final class Main {
                 if (Double.isFinite(value) && value >= min && value <= max) return value;
             } catch (NumberFormatException ignored) { }
             System.out.printf("Enter a number from %.0f to %.0f.%n", min, max);
+        }
+    }
+
+    private static boolean saveLibrary(SongRepository repository, SongService library) {
+        try {
+            repository.saveAll(library.getAllRanked());
+            System.out.println("Library saved successfully.");
+            return true;
+
+        } catch (SQLException e) {
+            System.err.println(
+                    "Could not save library: " + e.getMessage());
+            System.err.println(
+                    "Changes are only in memory. Do not exit yet.");
+            return false;
         }
     }
 }
