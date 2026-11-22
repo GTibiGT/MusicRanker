@@ -1,19 +1,5 @@
-# Java compiled files
-*.class
-
-# Maven build output
 target/
-
-# VS Code local settings
+*.class
+data/*.db
+data/*.db-*
 .vscode/
-
-# IDE files
-.idea/
-*.iml
-
-# Local database
-*.db
-
-# Operating system
-.DS_Store
-Thumbs.db

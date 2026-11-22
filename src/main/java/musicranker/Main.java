@@ -209,52 +209,16 @@ public final class Main {
         }
     }
 
-    
-    private static void filterSongs(
-            Scanner scanner,
-            SongService library,
-            RankingService ranking) {
-
-        System.out.println("\n=== FILTER SONGS ===");
-        System.out.println("1. By artist");
-        System.out.println("2. By tier");
-        System.out.println("3. By minimum score");
-
+    private static void filterSongs(Scanner scanner, SongService library, RankingService ranking) {
+        System.out.println("\n1. By artist\n2. By tier\n3. By minimum score");
         int option = readInt(scanner, "Filter: ", 1, 3);
-
         switch (option) {
-
-            case 1 -> {
-                String artist = readRequired(
-                        scanner, "Artist name: ");
-
-                printSongs(
-                        library.filterByArtist(artist),
-                        ranking);
-            }
-
-            case 2 -> {
-                Tier tier = readTier(scanner);
-
-                printSongs(
-                        library.filterByTier(tier),
-                        ranking);
-            }
-
-            case 3 -> {
-                double minimum = readDouble(
-                        scanner,
-                        "Minimum score (0-100): ",
-                        0,
-                        100);
-
-                printSongs(
-                        library.filterByMinimumScore(minimum),
-                        ranking);
-            }
+            case 1 -> printSongs(library.filterByArtist(readRequired(scanner, "Artist: ")), ranking);
+            case 2 -> printSongs(library.filterByTier(readTier(scanner)), ranking);
+            case 3 -> printSongs(library.filterByMinimumScore(
+                    readDouble(scanner, "Minimum score (0-100): ", 0, 100)), ranking);
         }
     }
-
 
     private static Tier readTier(Scanner scanner) {
         while (true) {
